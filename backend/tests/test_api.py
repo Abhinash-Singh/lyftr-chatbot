@@ -26,10 +26,13 @@ def _clear_cache():
     _response_cache.clear()
 
 
-client = TestClient(app)
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as c:
+        yield c
 
 
-def test_health():
+def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
@@ -39,7 +42,7 @@ def test_health():
 
 
 @patch("main.litellm.completion", return_value=_mock_response())
-def test_chat_success(mock_comp):
+def test_chat_success(mock_comp, client):
     resp = client.post(
         "/chat",
         json={"session_id": "test-1", "message": "Hi"},
@@ -59,7 +62,7 @@ def test_chat_success(mock_comp):
 
 
 @patch("main.litellm.completion", return_value=_mock_response())
-def test_chat_cache_hit(mock_comp):
+def test_chat_cache_hit(mock_comp, client):
     resp1 = client.post(
         "/chat",
         json={"session_id": "cache-1", "message": "Hello"},
@@ -78,17 +81,17 @@ def test_chat_cache_hit(mock_comp):
     assert resp2.json()["reply"] == "Hello!"
 
 
-def test_chat_missing_message():
+def test_chat_missing_message(client):
     resp = client.post("/chat", json={"session_id": "v-1", "message": ""})
     assert resp.status_code == 422
 
 
-def test_chat_missing_session_id():
+def test_chat_missing_session_id(client):
     resp = client.post("/chat", json={"message": "hi"})
     assert resp.status_code == 422
 
 
-def test_chat_message_too_long():
+def test_chat_message_too_long(client):
     resp = client.post(
         "/chat",
         json={"session_id": "v-2", "message": "x" * 4001},
@@ -96,11 +99,8 @@ def test_chat_message_too_long():
     assert resp.status_code == 422
 
 
-@patch(
-    "main.litellm.completion",
-    side_effect=Exception("rate limit"),
-)
-def test_chat_all_keys_fail(mock_comp):
+@patch("main.litellm.completion")
+def test_chat_all_keys_fail(mock_comp, client):
     mock_comp.side_effect = type(
         "RateLimitError", (Exception,), {"status_code": 429}
     )()
@@ -113,7 +113,7 @@ def test_chat_all_keys_fail(mock_comp):
 
 
 @patch("main.litellm.completion", return_value=_mock_response())
-def test_simulate_failure_key1(mock_comp):
+def test_simulate_failure_key1(mock_comp, client):
     resp = client.post(
         "/chat",
         json={"session_id": "sim-1", "message": "hi"},
@@ -125,7 +125,7 @@ def test_simulate_failure_key1(mock_comp):
 
 
 @patch("main.litellm.completion", return_value=_mock_response())
-def test_simulate_failure_all(mock_comp):
+def test_simulate_failure_all(mock_comp, client):
     resp = client.post(
         "/chat",
         json={"session_id": "sim-2", "message": "hi"},
@@ -135,7 +135,7 @@ def test_simulate_failure_all(mock_comp):
 
 
 @patch("main.litellm.completion", return_value=_mock_response())
-def test_get_session_messages(mock_comp):
+def test_get_session_messages(mock_comp, client):
     client.post(
         "/chat",
         json={"session_id": "hist-1", "message": "What is 2+2?"},
@@ -150,14 +150,14 @@ def test_get_session_messages(mock_comp):
     assert "metadata" in data["messages"][1]
 
 
-def test_get_session_not_found():
+def test_get_session_not_found(client):
     resp = client.get("/sessions/nonexistent/messages")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "session not found"
 
 
 @patch("main.litellm.completion", return_value=_mock_response())
-def test_multi_turn(mock_comp):
+def test_multi_turn(mock_comp, client):
     client.post(
         "/chat",
         json={"session_id": "multi-1", "message": "My name is Alice"},

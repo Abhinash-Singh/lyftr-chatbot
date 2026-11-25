@@ -2,6 +2,7 @@ import os
 import json
 import time
 import hashlib
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
@@ -40,7 +41,16 @@ def _get_db_path() -> str:
     return DATABASE_URL.replace("sqlite:///", "", 1)
 
 
-app = FastAPI(title="LLM Chatbot API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global LLM_API_KEYS
+    raw = os.environ.get("LLM_API_KEYS", "")
+    LLM_API_KEYS = [k.strip() for k in raw.split(",") if k.strip()]
+    await init_db(_get_db_path())
+    yield
+
+
+app = FastAPI(title="LLM Chatbot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,14 +59,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup():
-    global LLM_API_KEYS
-    raw = os.environ.get("LLM_API_KEYS", "")
-    LLM_API_KEYS = [k.strip() for k in raw.split(",") if k.strip()]
-    await init_db(_get_db_path())
 
 
 @app.exception_handler(Exception)
